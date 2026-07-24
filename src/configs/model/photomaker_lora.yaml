@@ -1,0 +1,11 @@
+_target_: src.model.photomaker.lora.PhotomakerLora 
+base_model_name_or_path: stabilityai/stable-diffusion-xl-base-1.0
+inference_model_name_or_path: /home/jovyan/bobkov/persongen/hf_cache/hub/RealVisXL_V4.0
+photomaker_path: /home/jovyan/bobkov/PhotoMaker/photomaker-v1.bin
+rank: 16
+lora_modules:
+    - to_q
+    - to_k
+    - to_v
+    - to_out.0
+init_lora_weights: gaussian

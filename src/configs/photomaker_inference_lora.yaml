@@ -1,0 +1,28 @@
+defaults:
+  - inferencer: photomaker
+  - model: photomaker_lora
+  - writer: console
+  - transforms: only_instance
+  - ddp: ddp
+  - pipeline: photomaker
+  - metrics: all_metrics
+  - datasets: all_datasets
+  - dataloaders: all_dataloaders
+  - _self_
+
+val_datasets_names: ["man"]
+inference_metrics: ["clip_ts", "id_sim_best"]
+collate_fn_val: src.datasets.collate.collate_fn_val
+
+validation_args:
+  negative_prompt: "lowres, text, error, cropped, worst quality, low quality, jpeg artifacts, signature, watermark, blurry"
+  num_images_per_prompt: 5
+  num_inference_steps: 50
+  guidance_scale: 5
+  height: 1024
+  width: 1024
+  target_size: [1024, 1024]
+  original_size: [1024, 1024]
+  crops_coords_top_left: [0, 0]
+
+

@@ -1,0 +1,6 @@
+_target_: src.logger.console.ConsoleWriter
+id_length: 8
+run_name: test
+loss_names: ["loss"]
+project_name: test
+

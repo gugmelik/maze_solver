@@ -1,0 +1,4 @@
+defaults:
+  - batch_transforms: example
+  - instance_transforms: image_1024
+  - _self_

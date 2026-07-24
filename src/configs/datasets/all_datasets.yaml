@@ -1,0 +1,106 @@
+train:
+    dreambooth:
+        _target_: src.datasets.dreambooth.DreamBoothTrainDataset
+        data_path: /mnt/virtual_ai0001071-04017_SR004-nfs1/CFS-SR008/workspace/bobkov/dreambooth/dataset/dog
+        placeholder_token: sks
+        class_name: dog
+        instance_transforms: ${transforms.instance_transforms.train}
+      
+    cosmic:
+        _target_: src.datasets.cosmic.CosmicDoubledTrain
+        cosmic_json_pth: /home/jovyan/bobkov/persongen/cosmic_gathered.json
+        cosmic_texts_json_pth: /home/jovyan/bobkov/all_texts_cosmic_by_qween3.json 
+        cosmic_large_json_pth: /home/jovyan/bobkov/cosmic_large_alldata.json
+        cosmic_large_texts_json_pth: /home/jovyan/bobkov/all_texts_cosmic_large_by_qween3_trigger_word.json
+        images_path: /home/jovyan/bobkov/cosmic_data
+        num_refs: 1
+        instance_transforms: ${transforms.instance_transforms.train}
+    
+    cosmic_double:
+        _target_: src.datasets.cosmic.CosmicBaseTrainDouble
+        data_large_json_path: /home/jovyan/bobkov/cosmic_data/gathered_data_cosmic_large.json
+        data_json_path: /home/jovyan/bobkov/cosmic_data/gathered_data_cosmic.json
+        images_path: /home/jovyan/bobkov/cosmic_data
+        num_refs: 1
+        instance_transforms: ${transforms.instance_transforms.train}
+        min_face_res: 64
+        embeds_path: /home/jovyan/bobkov/cosmic_data/cosmic_embeds.pt
+        embeds_path_large: /home/jovyan/bobkov/cosmic_data/cosmic_large_embeds.pt
+        use_embeds: false
+    
+    cosmic_double_realref:
+        _target_: src.datasets.cosmic.CosmicRealRefTrainDouble
+        data_large_json_path: /home/jovyan/bobkov/cosmic_data/gathered_data_cosmic_large.json
+        data_json_path: /home/jovyan/bobkov/cosmic_data/gathered_data_cosmic.json
+        images_path: /home/jovyan/bobkov/cosmic_data
+        num_refs: 1
+        instance_transforms: ${transforms.instance_transforms.train}
+    
+    cosmic_double_onlyrealref:
+        _target_: src.datasets.cosmic.CosmicOnlyRealRefTrainDouble
+        data_large_json_path: /home/jovyan/bobkov/cosmic_data/gathered_data_cosmic_large.json
+        data_json_path: /home/jovyan/bobkov/cosmic_data/gathered_data_cosmic.json
+        images_path: /home/jovyan/bobkov/cosmic_data
+        num_refs: 1
+        instance_transforms: ${transforms.instance_transforms.train}
+        min_face_res: 64
+        embeds_path: /home/jovyan/bobkov/cosmic_data/cosmic_embeds.pt
+        embeds_path_large: /home/jovyan/bobkov/cosmic_data/cosmic_large_embeds.pt
+        use_embeds: false
+    
+    cosmic_double_randrealref:
+        _target_: src.datasets.cosmic.CosmicRandRealRefTrainDouble
+        data_large_json_path: /home/jovyan/bobkov/cosmic_data/gathered_data_cosmic_large_filtered.json
+        data_json_path: /home/jovyan/bobkov/cosmic_data/gathered_data_cosmic_filtered.json
+        images_path: /home/jovyan/bobkov/cosmic_data
+        num_refs: 1
+        instance_transforms: ${transforms.instance_transforms.train}
+        min_face_res: 96
+        embeds_path: /home/jovyan/bobkov/cosmic_data/cosmic_embeds.pt
+        embeds_path_large: /home/jovyan/bobkov/cosmic_data/cosmic_large_embeds.pt
+        use_embeds: true
+    
+
+val:
+    db_liv_small:
+      _target_: src.datasets.dreambooth.DreamBoothLivingSmall
+      data_path: /home/jovyan/bobkov/dreambooth/dataset/dog
+      placeholder_token: sks
+      class_name: dog
+
+    man:
+      _target_: src.datasets.man_datasets.ManValDataset
+      data_json_pth: /home/jovyan/bobkov/cosmic_data/filtered_ids3.json
+      images_path: /home/jovyan/bobkov/cosmic_data/ids
+      embeds_path: /home/jovyan/bobkov/text_separation_cursor/tmp/man_embeds.pt
+    
+    man_face:
+      _target_: src.datasets.man_datasets.ManValFaceDataset
+      data_json_pth: /home/jovyan/bobkov/cosmic_data/filtered_ids3.json
+      images_path: /home/jovyan/bobkov/cosmic_data/ids
+      embeds_path: /home/jovyan/bobkov/text_separation_cursor/tmp/man_embeds.pt
+    
+    woman:
+      _target_: src.datasets.man_datasets.WomanValDataset
+      data_json_pth: /home/jovyan/bobkov/cosmic_data/filtered_ids3.json
+      images_path: /home/jovyan/bobkov/cosmic_data/ids
+      embeds_path: /home/jovyan/bobkov/text_separation_cursor/tmp/man_embeds.pt
+
+
+    man_flux:
+      _target_: src.datasets.man_datasets.ManValFluxDataset
+      data_json_pth: /home/jovyan/bobkov/cosmic_data/filtered_ids3.json
+      images_path: /home/jovyan/bobkov/cosmic_data/ids
+      embeds_path: /home/jovyan/bobkov/text_separation_cursor/tmp/man_embeds.pt
+
+    woman_flux:
+      _target_: src.datasets.man_datasets.WomanValFluxDataset
+      data_json_pth: /home/jovyan/bobkov/cosmic_data/filtered_ids3.json
+      images_path: /home/jovyan/bobkov/cosmic_data/ids
+      embeds_path: /home/jovyan/bobkov/text_separation_cursor/tmp/man_embeds.pt
+
+    man_face_flux:
+      _target_: src.datasets.man_datasets.ManValFaceFluxDataset
+      data_json_pth: /home/jovyan/bobkov/cosmic_data/filtered_ids3.json
+      images_path: /home/jovyan/bobkov/cosmic_data/ids
+      embeds_path: /home/jovyan/bobkov/text_separation_cursor/tmp/man_embeds.pt

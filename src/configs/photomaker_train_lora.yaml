@@ -1,0 +1,46 @@
+defaults:
+  - trainer: photomaker_lora
+  - model: photomaker_lora
+  - writer: console
+  - transforms: only_instance
+  - ddp: accelerate
+  - lr_scheduler: custom_linear
+  - pipeline: photomaker
+  - metrics: all_metrics
+  - datasets: all_datasets
+  - dataloaders: all_dataloaders
+  - _self_
+
+optimizer:
+  _convert_: partial
+  _target_: torch.optim.AdamW
+  weight_decay: 0
+
+loss_function:
+  _target_: src.loss.diffusion_loss.MaskedDiffusionLoss
+
+lr_for_lora: 1e-5
+gradient_accumulation_steps: 1
+
+train_dataset_name: "cosmic_double"
+val_datasets_names: ["man_face", "woman", "man"]
+
+inference_metrics: ["clip_tripple_ts", "id_sim_best"]
+
+collate_fn_train: src.datasets.collate.collate_fn
+collate_fn_val: src.datasets.collate.collate_fn_val
+
+exp_namer: src.utils.exp_namers.from_config
+
+validation_args:
+  negative_prompt: "lowres, text, error, cropped, worst quality, low quality, jpeg artifacts, signature, watermark, blurry"
+  num_images_per_prompt: 5
+  num_inference_steps: 50
+  guidance_scale: 5
+  height: 1024
+  width: 1024
+  target_size: [1024, 1024]
+  original_size: [1024, 1024]
+  crops_coords_top_left: [0, 0]
+
+

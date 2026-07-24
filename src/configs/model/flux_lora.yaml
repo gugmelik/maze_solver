@@ -1,0 +1,11 @@
+_target_: src.model.flux.lora.FluxLora
+pretrained_model_name_or_path: /mnt/virtual_ai0001071-04017_SR004-nfs1/CFS-SR008/workspace/bobkov/FLUX.1-dev
+max_sequence_length: 512
+guidance_scale: 1.0
+rank: 16
+lora_modules:
+  - attn.to_q
+  - attn.to_k
+  - attn.to_v
+  - attn.to_out.0
+init_lora_weights: gaussian

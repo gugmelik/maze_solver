@@ -1,0 +1,23 @@
+defaults:
+  - inferencer: flux
+  - model: flux_lora
+  - writer: console
+  - transforms: only_instance
+  - ddp: ddp
+  - pipeline: flux
+  - metrics: all_metrics
+  - datasets: all_datasets
+  - dataloaders: all_dataloaders
+  - _self_
+
+val_datasets_names: ["db_liv_small"]
+inference_metrics: ["dino", "clip_ts"]
+collate_fn_val: src.datasets.collate.collate_fn_val
+
+validation_args:
+  num_images_per_prompt: 5
+  num_inference_steps: 28
+  guidance_scale: 3.5
+  height: 1024
+  width: 1024
+  max_sequence_length: 512

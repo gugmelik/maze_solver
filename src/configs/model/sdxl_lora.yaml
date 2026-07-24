@@ -1,0 +1,9 @@
+_target_: src.model.sdxl.lora.SDXLLora
+pretrained_model_name_or_path: stabilityai/stable-diffusion-xl-base-1.0
+rank: 16
+lora_modules:
+    - to_q
+    - to_k
+    - to_v
+    - to_out.0
+init_lora_weights: gaussian

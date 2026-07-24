@@ -1,0 +1,37 @@
+dino: 
+  _target_: src.metrics.dino.DinoMetric
+  model_name: dinov2_vits14
+  model_path: /mnt/virtual_ai0001071-04017_SR004-nfs1/CFS-SR008/workspace/bobkov/dinov2
+  to_norm: True
+  source: local
+  
+clip_ts:
+    _target_: src.metrics.text_sim.TextSimMetric
+    model_name: /mnt/virtual_ai0001071-04017_SR004-nfs1/CFS-SR008/workspace/bobkov/cosmic_data/ViT-L-14-336px.pt
+
+clip_tripple_ts:
+    _target_: src.metrics.text_sim.TrippleTextSimMetric
+    model_name: /home/jovyan/bobkov/cosmic_data/ViT-L-14-336px.pt
+    id_embeds_pth: /home/jovyan/bobkov/cosmic_data/new_id_embeds2_wwoman.pth
+
+id_sim_max:
+    _target_: src.metrics.id_sim_metric.IDSimMax
+    id_embeds_pth: /home/jovyan/bobkov/cosmic_data/new_id_embeds2_wwoman.pth
+
+id_sim_best:
+    _target_: src.metrics.id_sim_metric.IDSimBest
+    id_embeds_pth: /home/jovyan/bobkov/cosmic_data/new_id_embeds2_wwoman.pth
+
+bbox_size:
+    _target_: src.metrics.id_sim_metric.BoxSize
+    id_embeds_pth: /home/jovyan/bobkov/cosmic_data/new_id_embeds2_wwoman.pth
+
+clip_double_ts:
+    _target_: src.metrics.text_sim.DoubleTextSimMetric
+    model_name: /home/jovyan/bobkov/cosmic_data/ViT-L-14-336px.pt
+
+face_sim_all:
+    _target_: src.metrics.id_sim_metric.FaceSimAll
+    id_embeds_pth: /home/jovyan/bobkov/cosmic_data/new_id_embeds2_wwoman.pth
+    clip_model_name: /home/jovyan/bobkov/cosmic_data/ViT-L-14-336px.pt
+    bins: [64, 96, 128, 160, 192, 224, 256]
