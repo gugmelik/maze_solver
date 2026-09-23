@@ -1,0 +1,16 @@
+# Verified against the versions already present in the `ldm` conda env.
+torch>=2.4
+diffusers>=0.35          # FluxKontextPipeline
+transformers>=4.45
+peft>=0.13
+accelerate>=0.34
+bitsandbytes>=0.43       # NF4 quantization + 8-bit AdamW
+safetensors>=0.4
+sentencepiece            # T5 tokenizer
+protobuf
+numpy
+pillow
+pyyaml
+tqdm
+gradio>=4.44
+wandb

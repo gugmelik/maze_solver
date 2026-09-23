@@ -1,0 +1,49 @@
+# Baseline: LoRA on FLUX.1-Kontext-dev, 5x5 mazes, single RTX A5000 (24 GB).
+# Every key here matches a --flag of mazelora.train; CLI flags override this file.
+
+data:   data/maze5
+cache:  cache/maze5
+output: outputs/baseline
+
+model_id:     black-forest-labs/FLUX.1-Kontext-dev
+quantization: nf4          # nf4 | int8 | none  (nf4 is what fits 12B params in 24 GB)
+
+# --- LoRA ---------------------------------------------------------------
+# rank 16 rather than 8: maze solving is far outside the base model's
+# distribution, and attention-only r=8 tends to underfit it. Drop to 8 for a
+# cheaper/weaker baseline, or add "ff.net.0.proj" and "ff.net.2" to the targets
+# for a stronger one (costs ~2 GB more).
+lora_rank:    16
+lora_alpha:   16
+lora_dropout: 0.0
+lora_targets: [to_q, to_k, to_v, to_out.0]
+
+# --- optimisation -------------------------------------------------------
+max_steps:    6000         # ~6000 * 4 = 24k samples seen ~= 1.2 epochs
+batch_size:   1            # try 2 if nvidia-smi shows headroom
+grad_accum:   4
+lr:           1.0e-4
+lr_scheduler: constant_with_warmup
+warmup_steps: 100
+max_grad_norm: 1.0
+gradient_checkpointing: true
+
+# Flow-matching timestep sampling (same defaults as the diffusers FLUX scripts)
+weighting_scheme: logit_normal
+logit_mean:  0.0
+logit_std:   1.0
+mode_scale:  1.29
+guidance_scale: 1.0        # value baked into the distilled guidance embedding
+
+seed: 0
+num_workers: 4
+
+# --- logging / checkpointing -------------------------------------------
+save_every:     1000
+validate_every: 1000
+validate_n:     16         # eval mazes generated mid-training (keep small: ~7 s each)
+validate_steps: 20
+log_every:      10
+
+wandb:         true
+wandb_project: maze-diff-reasoning
