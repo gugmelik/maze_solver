@@ -108,22 +108,30 @@ class QwenEditBackend(Backend):
         `_get_qwen_prompt_embeds` treats a *list* of images as several references
         for a single prompt, so each maze is encoded on its own and the results
         are padded here.
+
+        Note that `encode_prompt` returns `None` for the mask whenever it would
+        be all ones -- which is always the case for a single un-padded prompt.
+        We only build a real mask when padding actually makes one necessary, and
+        otherwise pass `None` through, exactly as the pipeline does.
         """
-        embeds, masks = [], []
+        embeds, lengths = [], []
         for im in images:
-            e, m = text_pipe.encode_prompt(prompt=[prompt], image=im, device=device,
+            e, _ = text_pipe.encode_prompt(prompt=[prompt], image=im, device=device,
                                            num_images_per_prompt=1,
                                            max_sequence_length=1024)
             embeds.append(e[0])
-            masks.append(m[0])
-        L = max(e.shape[0] for e in embeds)
-        dim = embeds[0].shape[-1]
-        out = embeds[0].new_zeros(len(embeds), L, dim)
-        out_mask = masks[0].new_zeros(len(masks), L)
-        for i, (e, m) in enumerate(zip(embeds, masks)):
-            out[i, : e.shape[0]] = e
-            out_mask[i, : m.shape[0]] = m
-        return out, out_mask
+            lengths.append(e.shape[1])
+
+        L = max(lengths)
+        if len(set(lengths)) == 1:
+            return torch.stack(embeds), None      # no padding -> no mask needed
+
+        out = embeds[0].new_zeros(len(embeds), L, embeds[0].shape[-1])
+        mask = torch.zeros(len(embeds), L, dtype=torch.long, device=embeds[0].device)
+        for i, (e, n) in enumerate(zip(embeds, lengths)):
+            out[i, :n] = e
+            mask[i, :n] = 1
+        return out, mask
 
     @staticmethod
     def _img_shapes(bsz, size_px, vae_scale):

@@ -43,19 +43,26 @@ def cfg():
 
 
 class _StubTextPipe:
-    """Stands in for Qwen2.5-VL: returns embeddings of the right rank and dtype."""
+    """Stands in for Qwen2.5-VL.
 
-    def __init__(self, dim, device, dtype, seq=37):
+    Mirrors the real `encode_prompt` contract exactly, including the easily
+    missed part: it returns `None` for the mask whenever the mask would be all
+    ones, which for a single un-padded prompt is always. `vary` makes the
+    sequence length differ per call, to exercise the padding branch.
+    """
+
+    def __init__(self, dim, device, dtype, seq=37, vary=False):
         self.dim, self.device, self.dtype, self.seq = dim, device, dtype, seq
+        self.vary = vary
         self.calls = 0
 
     def encode_prompt(self, prompt, image=None, device=None, num_images_per_prompt=1,
                       max_sequence_length=1024):
         assert image is not None, "Qwen must pass the maze image to its text encoder"
+        seq = self.seq + (self.calls * 3 if self.vary else 0)
         self.calls += 1
-        e = torch.randn(1, self.seq, self.dim, device=self.device, dtype=self.dtype)
-        m = torch.ones(1, self.seq, dtype=torch.long, device=self.device)
-        return e, m
+        e = torch.randn(1, seq, self.dim, device=self.device, dtype=self.dtype)
+        return e, None      # the real pipeline drops an all-ones mask
 
 
 def tiny_flux(device, dtype):
@@ -88,6 +95,11 @@ def tiny_qwen(device, dtype):
 
 
 BUILDERS = {"flux_kontext": tiny_flux, "qwen_edit": tiny_qwen}
+
+
+def _img():
+    from PIL import Image
+    return Image.new("RGB", (32, 32))
 
 
 def batch(backend, device, bsz=2):
@@ -134,6 +146,19 @@ def run_backend(name, device, dtype):
     if name == "qwen_edit":
         check("text encoder was given the maze image", ctx["text_pipe"].calls == 2,
               f"{ctx['text_pipe'].calls} per-sample encodes for batch of 2")
+        # regression: encode_prompt returns None for an all-ones mask, and the
+        # equal-length case must pass that None straight through
+        e, m = backend._encode_batch(ctx["text_pipe"], "p",
+                                     [_img(), _img()], device)
+        check("equal-length prompts -> embeds stacked, mask left as None",
+              m is None and tuple(e.shape[:2]) == (2, ctx["text_pipe"].seq),
+              f"embeds {tuple(e.shape)}, mask {m}")
+        vary = _StubTextPipe(3584, device, dtype, vary=True)
+        e, m = backend._encode_batch(vary, "p", [_img(), _img(), _img()], device)
+        ok = (m is not None and e.shape[0] == 3 and m.shape == e.shape[:2]
+              and m.sum(1).tolist() == [37, 40, 43] and e.shape[1] == 43)
+        check("unequal-length prompts -> right-padded with a real mask", ok,
+              f"embeds {tuple(e.shape)}, mask rows {None if m is None else m.sum(1).tolist()}")
 
     opt = torch.optim.AdamW([p for _, p in named], lr=5e-3)
     opt.step()
