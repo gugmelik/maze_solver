@@ -14,7 +14,7 @@ import torch
 from PIL import Image
 from safetensors.torch import load_file, save_file
 
-from .base import Backend, bnb_config, flow_loss, pack, sample_noisy
+from .base import LORA_WEIGHTS_FILE, Backend, bnb_config, flow_loss, pack, sample_noisy
 
 
 class FluxKontextBackend(Backend):
@@ -153,7 +153,8 @@ class _FluxSolver:
         self.device = device
 
     def load_lora(self, lora_dir, scale):
-        self.pipe.load_lora_weights(str(lora_dir), adapter_name="maze")
+        self.pipe.load_lora_weights(str(lora_dir), weight_name=LORA_WEIGHTS_FILE,
+                                    adapter_name="maze")
         self.pipe.set_adapters(["maze"], adapter_weights=[scale])
 
     def set_lora_scale(self, scale):

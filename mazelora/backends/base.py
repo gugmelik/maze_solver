@@ -19,6 +19,33 @@ from pathlib import Path
 
 import torch
 
+#: Checkpoint filename. Always passed explicitly when loading: diffusers'
+#: model-level `load_lora_adapter` leaves `use_safetensors=None`, and its file
+#: lookup is gated on `(use_safetensors and weight_name is None) or
+#: weight_name.endswith(".safetensors")` -- so with both unset it skips
+#: safetensors entirely and fails looking for a .bin that was never written.
+LORA_WEIGHTS_FILE = "pytorch_lora_weights.safetensors"
+
+
+def save_lora(transformer, ck_dir: Path) -> Path:
+    """Write the adapter to `<ck_dir>/pytorch_lora_weights.safetensors`."""
+    from peft.utils import get_peft_model_state_dict
+    from safetensors.torch import save_file
+    ck_dir = Path(ck_dir)
+    ck_dir.mkdir(parents=True, exist_ok=True)
+    sd = {f"transformer.{k}": v.to(torch.float32).cpu().contiguous()
+          for k, v in get_peft_model_state_dict(transformer).items()}
+    path = ck_dir / LORA_WEIGHTS_FILE
+    save_file(sd, str(path))
+    return path
+
+
+def load_lora(transformer, ck_dir, adapter_name: str = "default"):
+    """Attach a saved adapter to a transformer, inferring rank and targets."""
+    transformer.load_lora_adapter(str(ck_dir), prefix="transformer",
+                                  weight_name=LORA_WEIGHTS_FILE,
+                                  adapter_name=adapter_name)
+
 
 # --------------------------------------------------------------------------- #
 # shared rectified-flow maths

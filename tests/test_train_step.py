@@ -18,6 +18,7 @@ Needs a GPU but only ~100 MB of VRAM.
 from __future__ import annotations
 
 import sys
+import tempfile
 import types
 from pathlib import Path
 
@@ -25,7 +26,7 @@ import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from mazelora.backends import get_backend, pack
+from mazelora.backends import get_backend, load_lora, pack, save_lora
 
 FAILS: list[str] = []
 LAT = 16                      # latent grid side -> 128px equivalent, 64 tokens
@@ -196,6 +197,40 @@ def run_backend(name, device, dtype):
           f"{losses[0]:.4f} -> {losses[-1]:.4f} ({100*(1-losses[-1]/losses[0]):.1f}% down)")
     check("descent is monotone, not noise", improved > 0.9 * (len(losses) - 1),
           f"{improved}/{len(losses)-1} steps improved")
+
+    # Checkpoint round-trip. Saving is only half the job: diffusers' model-level
+    # loader skips safetensors unless the filename is passed explicitly, so a
+    # checkpoint can be written perfectly and still be unloadable.
+    from peft.utils import get_peft_model_state_dict
+    with tempfile.TemporaryDirectory() as td:
+        path = save_lora(tr, td)
+        check("checkpoint written as safetensors",
+              path.name == "pytorch_lora_weights.safetensors" and path.exists(),
+              path.name)
+
+        torch.manual_seed(1)
+        before_loss = backend.loss(tr, bt, ctx, cfg(), sched, device, dtype).item()
+        before = {k: v.detach().clone() for k, v in get_peft_model_state_dict(tr).items()}
+
+        tr.delete_adapters(["default"])
+        gone = not any("lora" in n for n, _ in tr.named_parameters())
+        check("adapter can be detached", gone)
+
+        load_lora(tr, td)
+        after = get_peft_model_state_dict(tr)
+        same_keys = set(after) == set(before)
+        same_vals = same_keys and all(
+            torch.allclose(after[k].float().cpu(), before[k].float().cpu(), atol=1e-6)
+            for k in before)
+        check("reloaded adapter matches what was saved", same_keys and same_vals,
+              f"{len(before)} tensors"
+              + ("" if same_keys else f", key mismatch: {sorted(set(before) ^ set(after))[:3]}"))
+
+        torch.manual_seed(1)
+        after_loss = backend.loss(tr, bt, ctx, cfg(), sched, device, dtype).item()
+        check("reloaded model reproduces the same loss",
+              abs(after_loss - before_loss) < 1e-4,
+              f"{before_loss:.6f} vs {after_loss:.6f}")
 
 
 def pick_device():

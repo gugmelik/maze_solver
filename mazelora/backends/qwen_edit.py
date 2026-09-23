@@ -29,7 +29,7 @@ import numpy as np
 import torch
 from PIL import Image
 
-from .base import Backend, bnb_config, flow_loss, pack, sample_noisy
+from .base import Backend, bnb_config, flow_loss, load_lora, pack, sample_noisy
 
 CONDITION_PX = 384          # what the vision tower sees; matches CONDITION_IMAGE_SIZE
 
@@ -200,10 +200,8 @@ class _QwenSolver:
         self._lora_scale = 1.0
 
     def load_lora(self, lora_dir, scale):
-        # the transformer knows how to attach a LoRA directory itself, including
-        # inferring rank and target modules from the saved state dict
-        self.transformer.load_lora_adapter(str(lora_dir), adapter_name="maze",
-                                           prefix="transformer")
+        # the transformer infers rank and target modules from the state dict
+        load_lora(self.transformer, lora_dir, adapter_name="maze")
         self.set_lora_scale(scale)
 
     def set_lora_scale(self, scale):

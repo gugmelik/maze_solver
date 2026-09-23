@@ -33,7 +33,7 @@ import yaml
 from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 
-from .backends import backend_names, get_backend
+from .backends import backend_names, get_backend, load_lora, save_lora
 from .dataset import LatentPairs
 
 
@@ -165,7 +165,7 @@ def main():
           f"across {len(params)} tensors")
 
     if args.resume:
-        transformer.load_lora_adapter(str(args.resume), prefix="transformer")
+        load_lora(transformer, args.resume)
         print(f"resumed LoRA weights from {args.resume}")
 
     import bitsandbytes as bnb
@@ -197,14 +197,8 @@ def main():
         print(f"wandb: {run.url}")
 
     def save_checkpoint(step: int):
-        from peft.utils import get_peft_model_state_dict
         ck = out / "checkpoints" / f"step-{step:06d}"
-        ck.mkdir(parents=True, exist_ok=True)
-        lora_sd = {f"transformer.{k}": v
-                   for k, v in get_peft_model_state_dict(transformer).items()}
-        from safetensors.torch import save_file
-        save_file({k: v.to(torch.float32).cpu().contiguous() for k, v in lora_sd.items()},
-                  str(ck / "pytorch_lora_weights.safetensors"))
+        save_lora(transformer, ck)
         torch.save({"optimizer": optimizer.state_dict(),
                     "lr_scheduler": lr_sched.state_dict(), "step": step},
                    ck / "state.pt")
