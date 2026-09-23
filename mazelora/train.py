@@ -1,15 +1,21 @@
-"""LoRA fine-tuning of FLUX.1-Kontext-dev on maze solving. Single 24 GB GPU.
+"""LoRA fine-tuning of an image-edit diffusion model on maze solving.
 
-Memory plan for an A5000:
-  * DiT quantized to NF4                              ~7 GB
-  * LoRA adapters kept in fp32, everything else frozen  <1 GB
-  * gradient checkpointing on the DiT blocks           trades compute for ~8 GB
-  * 8-bit AdamW                                        negligible state
-  * text encoders + VAE never loaded (cached latents)  saves ~10 GB
-Leaving roughly 10 GB of headroom for activations at batch size 1-2.
+Pick the base model with `--backend`:
 
-Objective: rectified-flow matching, identical to the diffusers FLUX reference
-scripts -- predict (noise - target) at a logit-normally sampled sigma.
+    --backend flux_kontext    FLUX.1-Kontext-dev, 12B, ~34 GB download
+    --backend qwen_edit       Qwen-Image-Edit-2511, 20B, ~54 GB download
+
+Both train the same way -- rectified flow matching on a reference-conditioned
+transformer -- so results are directly comparable. What differs per model lives
+in `mazelora/backends/`.
+
+Memory plan for a 24 GB card:
+  * DiT quantized to NF4                                ~7 GB (12B) / ~12 GB (20B)
+  * LoRA adapters in fp32, everything else frozen        <1 GB
+  * gradient checkpointing on the DiT blocks             trades compute for ~8 GB
+  * 8-bit AdamW                                          negligible state
+  * VAE never loaded; text encoder loaded only if the
+    backend's text conditioning depends on the image     0 GB (FLUX) / ~4 GB (Qwen)
 """
 
 from __future__ import annotations
@@ -27,26 +33,28 @@ import yaml
 from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 
+from .backends import backend_names, get_backend
 from .dataset import LatentPairs
-from .flux_utils import MODEL_ID, load_prompt_cache, load_transformer, pack, latent_ids
 
 
-# --------------------------------------------------------------------------- #
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--config", type=str, default=None, help="YAML file of defaults")
+    p.add_argument("--backend", type=str, default="flux_kontext", choices=backend_names(),
+                   help="which base model to fine-tune")
     p.add_argument("--data", type=str, default="data/maze5")
     p.add_argument("--cache", type=str, default="cache/maze5")
-    p.add_argument("--output", type=str, default="outputs/baseline")
-    p.add_argument("--model_id", type=str, default=MODEL_ID)
+    p.add_argument("--output", type=str, default=None,
+                   help="default: outputs/<backend>")
+    p.add_argument("--model_id", type=str, default=None, help="override the backend default")
     p.add_argument("--quantization", type=str, default="nf4", choices=["nf4", "int8", "none"])
 
     p.add_argument("--lora_rank", type=int, default=16)
     p.add_argument("--lora_alpha", type=int, default=16)
     p.add_argument("--lora_dropout", type=float, default=0.0)
-    p.add_argument("--lora_targets", nargs="+",
-                   default=["to_q", "to_k", "to_v", "to_out.0"])
+    p.add_argument("--lora_targets", nargs="+", default=None,
+                   help="default: the backend's attention projections")
 
     p.add_argument("--max_steps", type=int, default=6000)
     p.add_argument("--batch_size", type=int, default=1)
@@ -55,8 +63,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--lr_scheduler", type=str, default="constant_with_warmup")
     p.add_argument("--warmup_steps", type=int, default=100)
     p.add_argument("--max_grad_norm", type=float, default=1.0)
-    p.add_argument("--guidance_scale", type=float, default=1.0,
-                   help="value fed to the distilled guidance embedding during training")
+    p.add_argument("--guidance_scale", type=float, default=None,
+                   help="value fed to a distilled guidance embedding, where the "
+                        "model has one; default: the backend's")
     p.add_argument("--weighting_scheme", type=str, default="logit_normal",
                    choices=["sigma_sqrt", "logit_normal", "mode", "cosmap", "none"])
     p.add_argument("--logit_mean", type=float, default=0.0)
@@ -70,9 +79,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     p.add_argument("--save_every", type=int, default=1000)
     p.add_argument("--validate_every", type=int, default=1000)
-    p.add_argument("--validate_n", type=int, default=16,
-                   help="eval samples generated for in-training validation")
-    p.add_argument("--validate_steps", type=int, default=20, help="denoising steps at validation")
+    p.add_argument("--validate_n", type=int, default=16)
+    p.add_argument("--validate_steps", type=int, default=20)
+    p.add_argument("--validate_guidance", type=float, default=None)
     p.add_argument("--log_every", type=int, default=10)
     p.add_argument("--resume", type=str, default=None, help="checkpoint dir to resume from")
 
@@ -80,8 +89,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--no_wandb", dest="wandb", action="store_false",
                    help="disable W&B even if the config file enables it")
     p.add_argument("--wandb_project", type=str, default="maze-diff-reasoning")
-    p.add_argument("--wandb_entity", type=str, default=None,
-                   help="W&B team; omit to use your default entity")
+    p.add_argument("--wandb_entity", type=str, default=None)
     p.add_argument("--wandb_run_name", type=str, default=None)
     return p
 
@@ -97,115 +105,67 @@ def parse_args(argv=None):
         if unknown:
             raise SystemExit(f"unknown keys in {known.config}: {sorted(unknown)}")
         parser.set_defaults(**cfg)          # CLI flags still win over the YAML
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
 
-
-# --------------------------------------------------------------------------- #
-def get_sigmas(scheduler, timesteps, device, n_dim: int, dtype):
-    sigmas = scheduler.sigmas.to(device=device, dtype=dtype)
-    schedule_t = scheduler.timesteps.to(device)
-    idx = [(schedule_t == t).nonzero().item() for t in timesteps]
-    sigma = sigmas[idx].flatten()
-    while sigma.ndim < n_dim:
-        sigma = sigma.unsqueeze(-1)
-    return sigma
-
-
-def flow_matching_loss(transformer, target_packed, cond_packed, ctx, cfg, scheduler):
-    """One rectified-flow training step, Kontext style.
-
-    The reference (puzzle) latents are appended to the noisy target along the
-    *sequence* axis and tagged via `img_ids[..., 0] == 1`; only the target half
-    of the prediction is supervised. Target is the straight-line velocity
-    `noise - clean`, i.e. the model learns to point from noise back to the
-    solved maze.
-    """
-    from diffusers.training_utils import (compute_density_for_timestep_sampling,
-                                          compute_loss_weighting_for_sd3)
-    device, bsz = target_packed.device, target_packed.shape[0]
-    n_train = scheduler.config.num_train_timesteps
-
-    noise = torch.randn_like(target_packed)
-    u = compute_density_for_timestep_sampling(
-        cfg.weighting_scheme, bsz, cfg.logit_mean, cfg.logit_std, cfg.mode_scale)
-    idx = (u * n_train).long().clamp(0, n_train - 1)
-    timesteps = scheduler.timesteps[idx].to(device)
-    sigmas = get_sigmas(scheduler, timesteps, device, target_packed.ndim, target_packed.dtype)
-    noisy = (1.0 - sigmas) * target_packed + sigmas * noise
-
-    hidden = torch.cat([noisy, cond_packed], dim=1)
-    guidance = (torch.full([bsz], cfg.guidance_scale, device=device, dtype=torch.float32)
-                if transformer.config.guidance_embeds else None)
-
-    with torch.autocast("cuda", dtype=torch.bfloat16, enabled=hidden.is_cuda):
-        pred = transformer(
-            hidden_states=hidden,
-            timestep=timesteps.to(hidden.dtype) / 1000,
-            guidance=guidance,
-            pooled_projections=ctx["pooled"].expand(bsz, -1),
-            encoder_hidden_states=ctx["prompt"].expand(bsz, -1, -1),
-            txt_ids=ctx["text_ids"],
-            img_ids=ctx["img_ids"],
-            return_dict=False,
-        )[0]
-    pred = pred[:, : target_packed.shape[1]].float()
-
-    flow_target = (noise - target_packed).float()
-    weighting = compute_loss_weighting_for_sd3(cfg.weighting_scheme, sigmas).float()
-    return (weighting * (pred - flow_target) ** 2).mean()
+    backend = get_backend(args.backend)
+    if args.lora_targets is None:
+        args.lora_targets = list(backend.default_lora_targets)
+    if args.model_id is None:
+        args.model_id = backend.default_model_id
+    if args.guidance_scale is None:
+        args.guidance_scale = backend.train_guidance
+    if args.output is None:
+        args.output = f"outputs/{backend.name}"
+    return args, backend
 
 
 def main():
-    args = parse_args()
+    args, backend = parse_args()
     torch.manual_seed(args.seed)
     random.seed(args.seed)
     np.random.seed(args.seed)
-    device = "cuda"
-    dtype = torch.bfloat16
+    device, dtype = "cuda", torch.bfloat16
+
+    cache = Path(args.cache) / backend.name
+    if not (cache / "meta.json").exists():
+        raise SystemExit(
+            f"no cache for backend {backend.name!r} at {cache}.\n"
+            f"run: python -m mazelora.precompute --backend {backend.name} "
+            f"--data {args.data} --cache {args.cache}")
 
     out = Path(args.output)
     (out / "checkpoints").mkdir(parents=True, exist_ok=True)
     (out / "run_config.json").write_text(json.dumps(vars(args), indent=2))
 
     # ---------------- data ----------------
-    train_ds = LatentPairs(args.cache, "train")
+    train_ds = LatentPairs(cache, "train", data_dir=args.data,
+                           condition_px=backend.condition_px)
     size_px = train_ds.meta["size_px"]
-    h_lat = w_lat = size_px // 8
     loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True,
                         num_workers=args.num_workers, pin_memory=True, drop_last=True,
                         persistent_workers=args.num_workers > 0)
+    print(f"backend: {backend.name} ({args.model_id})")
     print(f"train samples: {len(train_ds)}  latent {tuple(train_ds.cond.shape[1:])}")
-
-    prompt_embeds, pooled_embeds, text_ids = load_prompt_cache(
-        Path(args.cache) / "prompt.safetensors", device, dtype)
-    prompt_embeds = prompt_embeds.unsqueeze(0)
-    pooled_embeds = pooled_embeds.unsqueeze(0)
 
     # ---------------- model ----------------
     print(f"loading transformer ({args.quantization})...")
-    transformer = load_transformer(args.model_id, args.quantization, dtype, device)
+    transformer = backend.load_transformer(args.model_id, args.quantization, dtype, device)
     transformer.requires_grad_(False)
     if args.gradient_checkpointing:
         transformer.enable_gradient_checkpointing()
 
-    from peft import LoraConfig
     from diffusers.training_utils import cast_training_params
-    lora_cfg = LoraConfig(r=args.lora_rank, lora_alpha=args.lora_alpha,
-                          lora_dropout=args.lora_dropout, init_lora_weights="gaussian",
-                          target_modules=args.lora_targets)
-    transformer.add_adapter(lora_cfg)
+    from peft import LoraConfig
+    transformer.add_adapter(LoraConfig(
+        r=args.lora_rank, lora_alpha=args.lora_alpha, lora_dropout=args.lora_dropout,
+        init_lora_weights="gaussian", target_modules=args.lora_targets))
     cast_training_params(transformer, dtype=torch.float32)   # fp32 adapters, bf16 autocast
     params = [p for p in transformer.parameters() if p.requires_grad]
     print(f"trainable params: {sum(p.numel() for p in params)/1e6:.2f}M "
           f"across {len(params)} tensors")
 
     if args.resume:
-        from diffusers import FluxKontextPipeline
-        state = FluxKontextPipeline.lora_state_dict(args.resume)
-        state = {k.removeprefix("transformer."): v for k, v in state.items()
-                 if k.startswith("transformer.")}
-        from peft.utils import set_peft_model_state_dict
-        set_peft_model_state_dict(transformer, state)
+        transformer.load_lora_adapter(str(args.resume), prefix="transformer")
         print(f"resumed LoRA weights from {args.resume}")
 
     import bitsandbytes as bnb
@@ -216,10 +176,9 @@ def main():
                              num_warmup_steps=args.warmup_steps,
                              num_training_steps=args.max_steps)
 
-    from diffusers import FlowMatchEulerDiscreteScheduler
-    noise_scheduler = FlowMatchEulerDiscreteScheduler.from_pretrained(
-        args.model_id, subfolder="scheduler")
-    sched_copy = copy.deepcopy(noise_scheduler)
+    sched_copy = copy.deepcopy(backend.scheduler(args.model_id))
+    ctx = backend.make_context(cache, args.model_id, args.quantization,
+                               device, dtype, size_px)
 
     start_step = 0
     if args.resume and (Path(args.resume) / "state.pt").exists():
@@ -229,26 +188,23 @@ def main():
         start_step = st["step"]
         print(f"resumed optimizer at step {start_step}")
 
-    # positional ids are constant for a fixed resolution -> build once
-    tgt_ids = latent_ids(h_lat, w_lat, device, dtype, is_reference=False)
-    cond_ids = latent_ids(h_lat, w_lat, device, dtype, is_reference=True)
-    img_ids = torch.cat([tgt_ids, cond_ids], dim=0)
-
     run = None
     if args.wandb:
         import wandb
         run = wandb.init(project=args.wandb_project, entity=args.wandb_entity,
-                         name=args.wandb_run_name, config=vars(args), dir=str(out))
+                         name=args.wandb_run_name or f"{backend.name}-r{args.lora_rank}",
+                         config=vars(args), dir=str(out))
         print(f"wandb: {run.url}")
 
     def save_checkpoint(step: int):
-        from diffusers import FluxKontextPipeline
         from peft.utils import get_peft_model_state_dict
         ck = out / "checkpoints" / f"step-{step:06d}"
         ck.mkdir(parents=True, exist_ok=True)
-        lora_sd = get_peft_model_state_dict(transformer)
-        FluxKontextPipeline.save_lora_weights(str(ck), transformer_lora_layers=lora_sd,
-                                              safe_serialization=True)
+        lora_sd = {f"transformer.{k}": v
+                   for k, v in get_peft_model_state_dict(transformer).items()}
+        from safetensors.torch import save_file
+        save_file({k: v.to(torch.float32).cpu().contiguous() for k, v in lora_sd.items()},
+                  str(ck / "pytorch_lora_weights.safetensors"))
         torch.save({"optimizer": optimizer.state_dict(),
                     "lr_scheduler": lr_sched.state_dict(), "step": step},
                    ck / "state.pt")
@@ -256,18 +212,19 @@ def main():
         return ck
 
     def run_validation(step: int):
-        from .infer import MazeSolver
-        from .metrics import aggregate, score_sample
         from .dataset import load_records
+        from .infer import MazeSolver
         from .maze import render_record
+        from .metrics import aggregate, score_sample
         transformer.eval()
         try:
             solver = MazeSolver.from_live_transformer(
-                transformer, args.model_id, Path(args.cache), device)
+                backend, transformer, args.model_id, cache, device, dtype)
             recs = load_records(args.data, "eval")[: args.validate_n]
-            imgs = solver.solve_records(recs, Path(args.data) / "eval",
+            imgs = solver.solve_records(recs, Path(args.data) / "eval", "eval",
                                         num_steps=args.validate_steps,
-                                        guidance_scale=2.5, seed=args.seed)
+                                        guidance_scale=args.validate_guidance,
+                                        seed=args.seed)
             rows = [score_sample(im, r, render_record(r, True))
                     for im, r in zip(imgs, recs)]
             agg = aggregate(rows)
@@ -290,8 +247,8 @@ def main():
                 by_len = agg.get("solved_by_path_len") or {}
                 if by_len:
                     tbl = wandb.Table(columns=["path_len", "n", "solved"],
-                                      data=[[int(k), v["n"], v["solved"]]
-                                            for k, v in sorted(by_len.items(), key=lambda x: int(x[0]))])
+                                      data=[[int(k), v["n"], v["solved"]] for k, v in
+                                            sorted(by_len.items(), key=lambda x: int(x[0]))])
                     run.log({"val/solved_by_path_len": wandb.plot.bar(
                         tbl, "path_len", "solved",
                         title="Solved rate by shortest-path length")}, step=step)
@@ -302,21 +259,13 @@ def main():
 
     # ---------------- train ----------------
     transformer.train()
-    step = start_step
-    micro = 0
+    step, micro = start_step, 0
     running, t0 = [], time.time()
     bar = tqdm(total=args.max_steps, initial=start_step, desc="train")
     done = False
     while not done:
         for batch in loader:
-            target_lat = batch["target"].to(device, dtype, non_blocking=True)
-            cond_lat = batch["cond"].to(device, dtype, non_blocking=True)
-
-            ctx = {"prompt": prompt_embeds, "pooled": pooled_embeds,
-                   "text_ids": text_ids, "img_ids": img_ids}
-            loss = flow_matching_loss(transformer, pack(target_lat), pack(cond_lat),
-                                      ctx, args, sched_copy)
-
+            loss = backend.loss(transformer, batch, ctx, args, sched_copy, device, dtype)
             (loss / args.grad_accum).backward()
             running.append(loss.detach().item())
             micro += 1

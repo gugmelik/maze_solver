@@ -1,7 +1,8 @@
 """Generate solutions for the held-out split, score them, write an HTML report.
 
-    python -m mazelora.evaluate --lora outputs/baseline/checkpoints/step-006000
-    python -m mazelora.evaluate --lora none --out outputs/base_model   # untuned reference
+    python -m mazelora.evaluate --lora outputs/flux_kontext/checkpoints/step-006000
+    python -m mazelora.evaluate --lora none            # untuned reference point
+    python -m mazelora.evaluate --backend qwen_edit --lora none
 
 Outputs under --out:
     metrics.json   aggregate numbers (feed back in via --compare_to)
@@ -17,8 +18,8 @@ import json
 import time
 from pathlib import Path
 
+from .backends import backend_names, get_backend
 from .dataset import load_records
-from .flux_utils import MODEL_ID
 from .maze import render_record
 from .metrics import aggregate, score_sample
 from .report import build_report
@@ -27,6 +28,7 @@ from .report import build_report
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--backend", type=str, default="flux_kontext", choices=backend_names())
     ap.add_argument("--lora", type=str, default=None,
                     help="checkpoint dir, or 'none' for the untuned base model")
     ap.add_argument("--lora_scale", type=float, default=1.0)
@@ -35,11 +37,13 @@ def main():
     ap.add_argument("--split", type=str, default="eval")
     ap.add_argument("--out", type=str, default=None,
                     help="default: <lora>/eval or outputs/base_model")
-    ap.add_argument("--model_id", type=str, default=MODEL_ID)
+    ap.add_argument("--model_id", type=str, default=None,
+                    help="override the backend default")
     ap.add_argument("--quantization", type=str, default="nf4", choices=["nf4", "int8", "none"])
     ap.add_argument("--n", type=int, default=100, help="how many held-out mazes to score")
     ap.add_argument("--steps", type=int, default=28)
-    ap.add_argument("--guidance", type=float, default=2.5)
+    ap.add_argument("--guidance", type=float, default=None,
+                    help="default: the backend's recommended inference guidance")
     ap.add_argument("--batch_size", type=int, default=1)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--gallery", type=int, default=48, help="samples embedded in the report")
@@ -48,9 +52,17 @@ def main():
     ap.add_argument("--save_images", action="store_true", default=True)
     args = ap.parse_args()
 
+    backend = get_backend(args.backend)
+    model_id = args.model_id or backend.default_model_id
+    guidance = backend.eval_guidance if args.guidance is None else args.guidance
+    cache = Path(args.cache) / backend.name
+    if not (cache / "meta.json").exists():
+        raise SystemExit(f"no cache for backend {args.backend!r} at {cache}; "
+                         f"run mazelora.precompute --backend {args.backend} first")
+
     lora = None if args.lora in (None, "none", "None", "") else args.lora
     out = Path(args.out) if args.out else (
-        Path(lora) / "eval" if lora else Path("outputs/base_model"))
+        Path(lora) / "eval" if lora else Path(f"outputs/{backend.name}_base"))
     out.mkdir(parents=True, exist_ok=True)
 
     records = load_records(args.data, args.split)[: args.n]
@@ -58,12 +70,12 @@ def main():
 
     from .infer import MazeSolver
     print(f"loading model ({'LoRA: ' + str(lora) if lora else 'base, no LoRA'})...")
-    solver = MazeSolver.from_checkpoint(lora, Path(args.cache), args.model_id,
+    solver = MazeSolver.from_checkpoint(args.backend, lora, cache, model_id,
                                         args.quantization, lora_scale=args.lora_scale)
 
     t0 = time.time()
     preds = solver.solve_records(records, Path(args.data) / args.split, args.split,
-                                 num_steps=args.steps, guidance_scale=args.guidance,
+                                 num_steps=args.steps, guidance_scale=guidance,
                                  seed=args.seed, batch_size=args.batch_size, progress=True)
     dt = time.time() - t0
     print(f"generated {len(preds)} images in {dt:.0f}s ({dt/max(len(preds),1):.1f}s each)")
@@ -93,9 +105,10 @@ def main():
 
     meta = {
         "checkpoint": str(lora) if lora else "base model (no LoRA)",
-        "model": args.model_id, "quantization": args.quantization,
+        "backend": backend.name, "model": model_id,
+        "quantization": args.quantization,
         "split": f"{args.data}/{args.split}", "samples": len(records),
-        "denoise steps": args.steps, "guidance": args.guidance,
+        "denoise steps": args.steps, "guidance": guidance,
         "lora scale": args.lora_scale if lora else "-",
         "seed": args.seed, "sec / image": f"{agg['seconds_per_image']:.1f}",
         "generated": time.strftime("%Y-%m-%d %H:%M"),

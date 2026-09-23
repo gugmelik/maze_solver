@@ -17,9 +17,9 @@ from pathlib import Path
 
 import gradio as gr
 
+from mazelora.backends import backend_names, get_backend
 from mazelora.dataset import load_records
 from mazelora.decode import record_from_image
-from mazelora.flux_utils import MODEL_ID
 from mazelora.maze import render_record
 from mazelora.metrics import score_sample
 
@@ -32,11 +32,16 @@ CSS = """
 def build(args):
     from mazelora.infer import MazeSolver
 
+    backend = get_backend(args.backend)
+    cache = Path(args.cache) / backend.name
+    if not (cache / "meta.json").exists():
+        raise SystemExit(f"no cache for backend {args.backend!r} at {cache}; "
+                         f"run mazelora.precompute --backend {args.backend} first")
     lora = None if args.lora in (None, "none", "None", "") else args.lora
-    print(f"loading model ({'LoRA: ' + str(lora) if lora else 'base model'})...")
-    solver = MazeSolver.from_checkpoint(lora, Path(args.cache), args.model_id,
+    print(f"loading {backend.name} ({'LoRA: ' + str(lora) if lora else 'base model'})...")
+    solver = MazeSolver.from_checkpoint(args.backend, lora, cache, args.model_id,
                                         args.quantization)
-    meta = json.loads((Path(args.cache) / "meta.json").read_text())
+    meta = json.loads((cache / "meta.json").read_text())
     default_size = meta.get("size", 5)
 
     records: list = []
@@ -62,7 +67,7 @@ def build(args):
                 "size, and that the start dot is yellow and the goal dot is blue.")
 
         if lora:
-            solver.pipe.set_adapters(["maze"], adapter_weights=[float(scale)])
+            solver.set_lora_scale(float(scale))
         pred = solver.solve_images([image], num_steps=int(steps),
                                    guidance_scale=float(guidance),
                                    seed=int(seed) if use_seed else None)[0]
@@ -99,8 +104,9 @@ def build(args):
 
     with gr.Blocks(title="Maze LoRA", css=CSS) as demo:
         gr.Markdown(
-            f"# Maze solving &mdash; FLUX.1-Kontext LoRA\n"
-            f"**Checkpoint:** `{lora or 'base model (no LoRA)'}` &nbsp;&middot;&nbsp; "
+            f"# Maze solving &mdash; `{backend.name}` LoRA\n"
+            f"**Model:** `{meta.get('model_id', backend.default_model_id)}` "
+            f"&nbsp;&middot;&nbsp; **Checkpoint:** `{lora or 'base model (no LoRA)'}`\n\n"
             f"**Prompt:** _{meta.get('prompt', '')[:110]}…_")
         with gr.Row():
             with gr.Column(scale=1):
@@ -113,7 +119,8 @@ def build(args):
                                  precision=0, minimum=2, maximum=16)
                 with gr.Accordion("Sampling", open=True):
                     steps = gr.Slider(4, 50, value=28, step=1, label="denoising steps")
-                    guidance = gr.Slider(1.0, 7.0, value=2.5, step=0.1, label="guidance scale")
+                    guidance = gr.Slider(1.0, 7.0, value=backend.eval_guidance, step=0.1,
+                                         label="guidance scale")
                     scale = gr.Slider(0.0, 1.5, value=1.0, step=0.05, label="LoRA scale",
                                       interactive=bool(lora))
                     with gr.Row():
@@ -134,12 +141,13 @@ def build(args):
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--backend", type=str, default="flux_kontext", choices=backend_names())
     ap.add_argument("--lora", type=str, default=None,
                     help="checkpoint dir, or 'none' for the untuned base model")
     ap.add_argument("--data", type=str, default="data/maze5")
     ap.add_argument("--cache", type=str, default="cache/maze5")
     ap.add_argument("--split", type=str, default="eval")
-    ap.add_argument("--model_id", type=str, default=MODEL_ID)
+    ap.add_argument("--model_id", type=str, default=None)
     ap.add_argument("--quantization", type=str, default="nf4", choices=["nf4", "int8", "none"])
     ap.add_argument("--port", type=int, default=7860)
     ap.add_argument("--host", type=str, default="127.0.0.1")

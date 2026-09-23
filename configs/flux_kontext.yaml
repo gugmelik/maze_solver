@@ -1,9 +1,10 @@
 # Baseline: LoRA on FLUX.1-Kontext-dev, 5x5 mazes, single RTX A5000 (24 GB).
 # Every key here matches a --flag of mazelora.train; CLI flags override this file.
 
-data:   data/maze5
-cache:  cache/maze5
-output: outputs/baseline
+backend: flux_kontext      # see configs/qwen_edit.yaml for the other model
+data:    data/maze5
+cache:   cache/maze5       # latents live under cache/maze5/flux_kontext/
+output:  outputs/flux_kontext
 
 model_id:     black-forest-labs/FLUX.1-Kontext-dev
 quantization: nf4          # nf4 | int8 | none  (nf4 is what fits 12B params in 24 GB)
