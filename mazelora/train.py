@@ -159,14 +159,18 @@ def main():
     transformer.add_adapter(LoraConfig(
         r=args.lora_rank, lora_alpha=args.lora_alpha, lora_dropout=args.lora_dropout,
         init_lora_weights="gaussian", target_modules=args.lora_targets))
+    if args.resume:
+        load_lora(transformer, args.resume)
+        print(f"resumed LoRA weights from {args.resume}")
+
+    # Order matters: loading re-injects the adapter at the model's dtype (bf16),
+    # so the fp32 cast and the parameter list must both come *after* any resume.
+    # Casting first would silently train a resumed run in bf16, and collecting
+    # `params` first could hand the optimizer stale tensors.
     cast_training_params(transformer, dtype=torch.float32)   # fp32 adapters, bf16 autocast
     params = [p for p in transformer.parameters() if p.requires_grad]
     print(f"trainable params: {sum(p.numel() for p in params)/1e6:.2f}M "
           f"across {len(params)} tensors")
-
-    if args.resume:
-        load_lora(transformer, args.resume)
-        print(f"resumed LoRA weights from {args.resume}")
 
     import bitsandbytes as bnb
     optimizer = bnb.optim.AdamW8bit(params, lr=args.lr, betas=(0.9, 0.999),

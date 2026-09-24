@@ -104,6 +104,55 @@ it tells you what the base model does with this prompt on its own.
 
 ---
 
+## Inference-time scaling (Best-of-N)
+
+A separate experiment: instead of one sample per maze, draw N and keep the best.
+
+```bash
+BACKEND=qwen_edit scripts/05_best_of_n.sh          # → <checkpoint>/best_of_n/report.html
+```
+
+What makes this worth running on *this* task is that **verification is free,
+exact, and needs no ground truth**. From the puzzle image alone we recover the
+walls and both endpoints (`decode.record_from_image`), then check whether a
+candidate's red route connects start to goal without crossing a wall. So
+Best-of-N here is a procedure you could actually ship, not just an oracle bound.
+
+The report plots two curves, and the gap between them is the point:
+
+| curve | meaning |
+|---|---|
+| **Best-of-N (verified)** | what you could ship — selection uses the puzzle image only |
+| **pass@N (oracle)** | was *any* of the N correct, judged against ground truth — the ceiling a perfect selector reaches |
+
+The verifier checks **legality only**. It never consults the BFS solution, even
+though `record_from_image` could compute one — that would make the experiment
+circular, since you could simply draw the answer. Legality is a checkable
+property of a candidate: the diffusion analogue of running a unit test rather
+than reading the answer key.
+
+It also reports **verifier precision** (of the candidates it accepted, how many
+were genuinely correct) and how many correct candidates it wrongly rejected. On
+simulated candidates the verifier is exact — zero false accepts, zero misses —
+so the two curves coincide; if they ever separate on real output, that gap is a
+decoder bug worth chasing, not a modelling result.
+
+Cost is `n_mazes × n_samples` generations — the defaults (40 × 8) take roughly
+an hour on Qwen at 20 steps. Useful knobs:
+
+```bash
+scripts/05_best_of_n.sh --n_samples 16          # longer scaling curve
+scripts/05_best_of_n.sh --n_mazes 100           # tighter estimate per point
+scripts/05_best_of_n.sh --guidance 1.0          # no CFG: ~2x faster on Qwen
+scripts/05_best_of_n.sh --lora none             # does the base model scale at all?
+```
+
+Candidates differ by seed only. Varying `--guidance` across candidates, or
+sampling at different step counts, is another diversity axis worth trying — the
+selector does not care where the candidates came from.
+
+---
+
 ## How it is put together
 
 ```
@@ -122,6 +171,8 @@ mazelora/
   metrics.py      scoring
   evaluate.py     generate → score → report
   report.py       self-contained report.html
+  best_of_n.py    inference-time scaling: verifier + selection + scaling curve
+  bon_report.py   report for the Best-of-N experiment
 app.py            Gradio playground
 ```
 
@@ -273,6 +324,9 @@ at the new directory. Nothing else changes.
   metrics and reporting are already model-agnostic.
 - **A new metric** — add it to `score_sample()`; `aggregate()`, the report tiles
   and W&B pick it up automatically.
+- **A different selector** — `best_of_n.rank_key()` is a pure function over
+  verdicts, unit-tested offline. Swapping in a learned verifier or a different
+  tie-break touches nothing else.
 
 Because `evaluate.py` writes `metrics.json` and takes `--compare_to`, any two
 runs can be diffed in one report — including across backends.

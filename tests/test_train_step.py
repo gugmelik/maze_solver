@@ -219,12 +219,28 @@ def run_backend(name, device, dtype):
         load_lora(tr, td)
         after = get_peft_model_state_dict(tr)
         same_keys = set(after) == set(before)
+        # Loading re-injects the adapter at the *model's* dtype, so on a bf16
+        # model the fp32 checkpoint comes back rounded to bf16. Compare at the
+        # precision the reload can actually deliver.
+        tol = 1e-6 if dtype == torch.float32 else 2e-2
         same_vals = same_keys and all(
-            torch.allclose(after[k].float().cpu(), before[k].float().cpu(), atol=1e-6)
+            torch.allclose(after[k].float().cpu(), before[k].float().cpu(),
+                           rtol=tol, atol=tol)
             for k in before)
         check("reloaded adapter matches what was saved", same_keys and same_vals,
-              f"{len(before)} tensors"
+              f"{len(before)} tensors, tol={tol:g}"
               + ("" if same_keys else f", key mismatch: {sorted(set(before) ^ set(after))[:3]}"))
+        check("reload lands at the model dtype, not the checkpoint's",
+              all(p.dtype == dtype for n, p in tr.named_parameters() if "lora" in n),
+              str({str(p.dtype) for n, p in tr.named_parameters() if "lora" in n}))
+
+        # This is what train.py must do after --resume: re-cast, then collect
+        # params. Casting before the load would silently train a resumed run in
+        # bf16 with an 8-bit optimizer.
+        cast_training_params(tr, dtype=torch.float32)
+        check("re-casting after reload restores fp32 adapters for training",
+              all(p.dtype == torch.float32
+                  for n, p in tr.named_parameters() if "lora" in n))
 
         torch.manual_seed(1)
         after_loss = backend.loss(tr, bt, ctx, cfg(), sched, device, dtype).item()

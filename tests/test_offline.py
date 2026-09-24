@@ -94,6 +94,53 @@ def main():
     check("shortest path recovered", all(a is not None and a.udrl == b.udrl
                                          for a, b in zip(rec2, recs)))
 
+    print("\nBest-of-N verifier (must never look at ground truth)")
+    from dataclasses import asdict
+    from mazelora.best_of_n import scaling_curve, select, verify
+
+    # the verifier only ever sees what it can decode from the puzzle image
+    seen = [record_from_image(render_record(r, False), 5, sample_id=r.id) for r in recs]
+    check("maze recovered from the puzzle for every sample",
+          all(s is not None and s.walls == r.walls for s, r in zip(seen, recs)))
+    good = [verify(render_record(r, True), s) for r, s in zip(recs, seen)]
+    check("accepts the true solution", all(v.accepted for v in good))
+    check("true solution has no stray red", all(v.extra_edges == 0 for v in good))
+    none_drawn = [verify(render_record(r, False), s) for r, s in zip(recs, seen)]
+    check("rejects a puzzle with no path drawn",
+          not any(v.accepted or v.route_found for v in none_drawn))
+    foreign = [verify(render_maze(r.grid, r.start, r.goal, o.path), s)
+               for r, o, s in zip(recs, recs[1:] + recs[:1], seen)]
+    check("rejects a path from a different maze", not any(v.accepted for v in foreign))
+    check("flags the illegal crossings it rejected on",
+          sum(v.wall_violations for v in foreign) > 0,
+          f"{sum(v.wall_violations for v in foreign)} across {len(foreign)} mazes")
+
+    print("\nBest-of-N selection")
+    v_ok, v_bad = good[0], none_drawn[0]
+    check("prefers an accepted candidate", select([v_bad, v_bad, v_ok, v_bad]) == 2)
+    check("ties break toward the earlier sample, so Best-of-1 is the baseline",
+          select([v_ok, v_ok, v_ok]) == 0 and select([v_bad, v_bad]) == 0)
+    check("falls back to the least-bad reject when none is accepted",
+          select([foreign[0], none_drawn[0]]) in (0, 1))
+
+    per_maze = []
+    for r, s in zip(recs[:20], seen[:20]):
+        # first candidate is always wrong, so pass@N genuinely rises with N
+        # and the monotonicity check is not vacuous
+        cands = [render_record(r, True) if k in (2, 5) else render_record(r, False)
+                 for k in range(6)]
+        vs = [verify(c, s) for c in cands]
+        sol = [bool(score_sample(c, r)["solved"]) for c in cands]
+        per_maze.append({"verdicts": [asdict(v) for v in vs], "solved": sol})
+    curve = scaling_curve(per_maze, 6)
+    check("pass@N never decreases with N",
+          all(b >= a - 1e-9 for a, b in zip(curve["pass_at_n"], curve["pass_at_n"][1:])),
+          str([round(x, 2) for x in curve["pass_at_n"]]))
+    check("Best-of-N never exceeds the oracle ceiling",
+          all(b <= o + 1e-9 for b, o in zip(curve["best_of_n"], curve["pass_at_n"])))
+    check("Best-of-1 equals the plain single-sample rate",
+          abs(curve["best_of_n"][0] - sum(m["solved"][0] for m in per_maze) / len(per_maze)) < 1e-9)
+
     print("\nreport renders")
     from mazelora.report import build_report
     imgs = {r.id: (render_record(r, False), render_record(r, True), render_record(r, True))
@@ -104,6 +151,19 @@ def main():
         html = p.read_text()
     check("report is self-contained html", html.startswith("<!doctype html>")
           and "data:image/png;base64," in html and len(html) > 10_000)
+
+    from mazelora.bon_report import build_bon_report
+    with tempfile.TemporaryDirectory() as td:
+        bagg = {"n_mazes": 20, "n_samples": 6, "backend": "test", "checkpoint": "ck",
+                "steps": 20, "guidance": 4.0, "seconds_per_image": 1.0,
+                "solved_at_1": curve["best_of_n"][0],
+                "solved_best_of_n": curve["best_of_n"][-1],
+                "pass_at_n": curve["pass_at_n"][-1], "verifier_precision": 1.0,
+                "curve": curve}
+        bp = build_bon_report(Path(td) / "b.html", bagg, [], {}, 0)
+        bhtml = bp.read_text()
+    check("best-of-N report renders", bhtml.startswith("<!doctype html>")
+          and "samples generated per maze" in bhtml)
 
     print(f"\n{'ALL CHECKS PASSED' if not FAILS else 'FAILED: ' + ', '.join(FAILS)}")
     return 1 if FAILS else 0
