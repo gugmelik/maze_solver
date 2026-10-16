@@ -1,0 +1,3 @@
+_target_: src.pipelines.flux2_klein.Flux2KleinPipeline.from_pretrained
+pretrained_model_name_or_path: black-forest-labs/FLUX.2-klein-base-4B
+torch_dtype: bfloat16

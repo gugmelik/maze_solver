@@ -1,0 +1,6 @@
+_target_: src.model.flux2.klein.Flux2Klein
+pretrained_model_name_or_path: black-forest-labs/FLUX.2-klein-4B
+max_sequence_length: 128
+guidance_scale: 1.0
+text_encoder_out_layers: [9, 18, 27]
+gradient_checkpointing: true

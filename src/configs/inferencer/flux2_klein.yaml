@@ -1,0 +1,5 @@
+_target_: src.trainer.flux2_inferencers.Flux2KleinInferencer
+seed: 0
+exp_save_dir: ???
+ckpt_dir: ???
+epochs_to_infer: ???

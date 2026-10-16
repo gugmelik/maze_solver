@@ -1,4 +1,26 @@
 train:
+    endocot:
+        _target_: src.datasets.endocot.EndoCoTDataset
+        data_root: data/EndoCoT
+        tasks: ["Maze"]
+        split: train
+        metadata_name: metadata_edit.csv
+        pair_mode: all
+        val_episodes_per_task: 8
+        max_val_samples: 16
+        seed: 0
+        instance_transforms: ${transforms.instance_transforms.train}
+    endocot_final:
+        _target_: src.datasets.endocot.EndoCoTDataset
+        data_root: data/EndoCoT
+        tasks: ["Maze"]
+        split: train
+        metadata_name: metadata_edit_final.csv
+        pair_mode: final
+        val_episodes_per_task: 8
+        max_val_samples: 16
+        seed: 0
+        instance_transforms: ${transforms.instance_transforms.train}
     dreambooth:
         _target_: src.datasets.dreambooth.DreamBoothTrainDataset
         data_path: /mnt/virtual_ai0001071-04017_SR004-nfs1/CFS-SR008/workspace/bobkov/dreambooth/dataset/dog
@@ -62,6 +84,43 @@ train:
     
 
 val:
+    endocot:
+        _target_: src.datasets.endocot.EndoCoTDataset
+        data_root: data/EndoCoT
+        tasks: ["Maze"]
+        split: val
+        metadata_name: metadata_edit.csv
+        pair_mode: all
+        val_episodes_per_task: 8
+        max_val_samples: 16
+        seed: 0
+        instance_transforms: ${transforms.instance_transforms.train}
+    endocot_final:
+        _target_: src.datasets.endocot.EndoCoTDataset
+        data_root: data/EndoCoT
+        tasks: ["Maze"]
+        split: val
+        metadata_name: metadata_edit_final.csv
+        pair_mode: final
+        val_episodes_per_task: 8
+        max_val_samples: 16
+        seed: 0
+        instance_transforms: ${transforms.instance_transforms.train}
+    maze_8_test:
+        _target_: src.datasets.endocot_maze_test.EndoCoTMazeTestDataset
+        data_root: data/EndoCoT_Maze_test
+        level: 8
+        instance_transforms: ${transforms.instance_transforms.train}
+    maze_16_test:
+        _target_: src.datasets.endocot_maze_test.EndoCoTMazeTestDataset
+        data_root: data/EndoCoT_Maze_test
+        level: 16
+        instance_transforms: ${transforms.instance_transforms.train}
+    maze_32_test:
+        _target_: src.datasets.endocot_maze_test.EndoCoTMazeTestDataset
+        data_root: data/EndoCoT_Maze_test
+        level: 32
+        instance_transforms: ${transforms.instance_transforms.train}
     db_liv_small:
       _target_: src.datasets.dreambooth.DreamBoothLivingSmall
       data_path: /home/jovyan/bobkov/dreambooth/dataset/dog

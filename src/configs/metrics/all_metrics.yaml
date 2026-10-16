@@ -1,3 +1,8 @@
+accuracy:
+  _target_: src.metrics.endocot_accuracy.EndoCoTAccuracy
+  maze_iou_threshold: 0.5
+  pixel_threshold: 0.9
+
 dino: 
   _target_: src.metrics.dino.DinoMetric
   model_name: dinov2_vits14

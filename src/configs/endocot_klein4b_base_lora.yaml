@@ -1,0 +1,56 @@
+defaults:
+  - trainer: flux2_klein
+  - model: flux2_klein_base_lora
+  - writer: wandb
+  - transforms: endocot
+  - ddp: ddp
+  - lr_scheduler: constant
+  - pipeline: flux2_klein_base
+  - metrics: all_metrics
+  - datasets: all_datasets
+  - dataloaders: all_dataloaders
+  - _self_
+
+optimizer:
+  _convert_: partial
+  _target_: torch.optim.AdamW
+  weight_decay: 0.01
+
+writer:
+  project_name: endocot
+  entity: null
+  run_name: endocot_klein4b_base_lora
+  mode: online
+  loss_names: ["loss", "mse"]
+
+loss_function:
+  _target_: src.loss.flux_loss.FluxFlowMatchLoss
+
+lr_for_lora: 1.0e-4
+gradient_accumulation_steps: 1
+
+# 150 epochs x 1000 steps = 150000 optimizer steps.
+# Validate on official EndoCoT Maze 8/16/32 tests after every epoch with 50 steps.
+trainer:
+  n_epochs: 150
+  epoch_len: 1000
+  save_period: 1
+
+train_dataset_name: endocot_final
+val_datasets_names: ["maze_8_test", "maze_16_test", "maze_32_test"]
+
+inference_metrics: ["accuracy"]
+
+collate_fn_train: src.datasets.collate.collate_fn_endocot
+collate_fn_val: src.datasets.collate.collate_fn_endocot
+
+exp_namer: src.utils.exp_namers.from_config
+
+validation_args:
+  seed: 0
+  num_inference_steps: 50
+  guidance_scale: 4.0
+  height: 512
+  width: 512
+  max_sequence_length: 128
+  text_encoder_out_layers: [9, 18, 27]

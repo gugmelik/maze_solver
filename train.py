@@ -1,5 +1,3 @@
-from src.logger.comet import CometMLWriter
-
 import warnings
 
 import hydra

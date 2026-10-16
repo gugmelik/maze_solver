@@ -23,6 +23,17 @@ def collate_fn(dataset_items: list[dict]):
     
     return result_batch
 
+def collate_fn_endocot(dataset_items: list[dict]):
+    """Stack EndoCoT target and condition images and keep prompt fields as lists."""
+    result_batch = {key: [] for key in dataset_items[0]}
+    for item in dataset_items:
+        for key, value in item.items():
+            result_batch[key].append(value)
+    for key in ("pixel_values", "cond_pixel_values"):
+        result_batch[key] = torch.stack(result_batch[key]).to(memory_format=torch.contiguous_format).float()
+    return result_batch
+
+
 def collate_fn_val(dataset_items: list[dict]):
     """
     Collate and pad fields in the dataset items.

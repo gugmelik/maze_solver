@@ -1,0 +1,34 @@
+defaults:
+  - inferencer: flux2_klein
+  - model: flux2_klein_lora
+  - writer: console
+  - transforms: endocot
+  - ddp: ddp
+  - pipeline: flux2_klein
+  - metrics: all_metrics
+  - datasets: all_datasets
+  - dataloaders: all_dataloaders
+  - _self_
+
+writer:
+  run_name: endocot_klein4b_lora_final_maze_test
+
+val_datasets_names: ["maze_8_test", "maze_16_test", "maze_32_test"]
+inference_metrics: ["accuracy"]
+collate_fn_val: src.datasets.collate.collate_fn_endocot
+
+inferencer:
+  seed: 0
+  exp_save_dir: saved/endocot_klein4b_lora_final/maze_test
+  ckpt_dir: saved/endocot_klein4b_lora_final
+  # Overridden by the launch script to every saved epoch.
+  epochs_to_infer: [1, 20]
+
+validation_args:
+  seed: 0
+  num_inference_steps: 4
+  guidance_scale: 1.0
+  height: 512
+  width: 512
+  max_sequence_length: 128
+  text_encoder_out_layers: [9, 18, 27]

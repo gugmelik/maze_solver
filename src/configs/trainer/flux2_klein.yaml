@@ -1,0 +1,13 @@
+_target_: src.trainer.flux2_trainers.Flux2KleinTrainer
+cfg_step: 1
+log_step: 10
+n_epochs: 20
+epoch_len: 1000
+resume_from: null
+from_pretrained: null
+save_period: 1
+save_dir: "saved"
+checkpoint_subdir: "checkpoints"
+metrics_subdir: "metrics"
+max_grad_norm: 1.0
+seed: 0

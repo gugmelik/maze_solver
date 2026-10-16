@@ -1,0 +1,14 @@
+train:
+  pixel_values: &image_transform
+    _target_: torchvision.transforms.v2.Compose
+    transforms:
+      - _target_: torchvision.transforms.Resize
+        size: [512, 512]
+        interpolation: 2
+      - _target_: torchvision.transforms.ToTensor
+      - _target_: torchvision.transforms.Normalize
+        mean: [0.5]
+        std: [0.5]
+  cond_pixel_values: *image_transform
+
+inference: null
